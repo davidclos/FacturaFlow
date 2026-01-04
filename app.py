@@ -15,13 +15,13 @@ from googleapiclient.http import MediaIoBaseUpload
 # ===================== CONFIGURACIÓ =====================
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/drive",  # <--- HEM TRET EL ".file"
+    "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets"
 ]
 
 LABEL_NAME = "Factures"
-DRIVE_FOLDER_ID = "1fpjoOGFJ-ZaoDKrBPmcaHsBFErTrwnTh"
-SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # El teu ID
+# Nota: Ja no necessitem DRIVE_FOLDER_ID fix, el busquem dinàmicament
+SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"
 
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
 st.markdown("<h1 style='text-align: center; color: #1a73e8;'>FacturaFlow Pro</h1>", unsafe_allow_html=True)
@@ -29,7 +29,7 @@ st.markdown("<p style='text-align: center; font-style: italic;'>Dades assegurade
 
 tab1, tab2 = st.tabs(["Pujar Factures", "Historial"])
 
-# ===================== AUTENTICACIÓ MILLORADA =====================
+# ===================== AUTENTICACIÓ =====================
 def authenticate():
     creds = None
     token_path = "token.pickle"
@@ -78,14 +78,37 @@ def authenticate():
     
     return gmail_service, drive_service, sheets_service
 
-# ===================== PUJAR FACTURES (AMB DEPURACIÓ) =====================
+# ===================== FUNCIÓ MAGICA: GET OR CREATE FOLDER =====================
+def get_or_create_folder(drive_service, folder_name):
+    """Busca una carpeta, si no existeix o no hi ha accés, la crea."""
+    try:
+        # Busquem carpeta que no estigui a la paperera
+        query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+        results = drive_service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        files = results.get('files', [])
+        
+        if files:
+            # Si en trobem una, tornem la primera
+            # st.info(f"Carpeta '{folder_name}' trobada. ID: {files[0]['id']}")
+            return files[0]['id']
+        else:
+            # Si no, la creem
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            file = drive_service.files().create(body=file_metadata, fields='id').execute()
+            # st.success(f"Carpeta '{folder_name}' creada nova. ID: {file['id']}")
+            return file['id']
+            
+    except Exception as e:
+        st.error(f"Error gestionant la carpeta: {e}")
+        st.stop()
+
+# ===================== PUJAR FACTURES =====================
 with tab1:
     st.markdown("### Importar des de Gmail (Etiqueta \"Factures\")")
     
-    # --- DEPURACIÓ: MOSTREM L'ID DE LA CARPETA ---
-    st.info(f"📂 **Verificant configuració:**\n\nL'App intentarà guardar a la carpeta Drive amb ID: `{DRIVE_FOLDER_ID}`")
-    # ---------------------------------------------
-
     col1, col2 = st.columns(2)
     with col1:
         trimestre = st.selectbox("Trimestre", ["Tots", "1r Trimestre", "2n Trimestre", "3r Trimestre", "4t Trimestre"])
@@ -94,6 +117,11 @@ with tab1:
 
     if st.button("Buscant correus..."):
         gmail_service, drive_service, sheets_service = authenticate()
+
+        # --- AQUI ESTÀ LA MÀGIA: OBTENIM ID DINÀMICAMENT ---
+        # Busquem o creem la carpeta "Factures Processades"
+        CURRENT_FOLDER_ID = get_or_create_folder(drive_service, "Factures Processades")
+        # ----------------------------------------------------
 
         # --- LÒGICA DE FILTRATGE PER DATES ---
         date_query = ""
@@ -119,11 +147,14 @@ with tab1:
             st.stop()
 
         st.success(f"Trobats {len(messages)} correus. Començant la càrrega...")
+        
+        # Barra de progrés
+        progress_bar = st.progress(0)
 
         with st.spinner("Processant..."):
             historial_rows = []
-            for msg in messages:
-                try: # <--- AFEGIT BLOC TRY/EXCEPT PER VEURE L'ERROR REAL
+            for i, msg in enumerate(messages):
+                try:
                     msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
                     payload = msg_data["payload"]
                     headers = payload["headers"]
@@ -138,10 +169,10 @@ with tab1:
                             file_data = base64.urlsafe_b64decode(att["data"])
                             filename = part["filename"]
 
-                            file_metadata = {"name": filename, "parents": [DRIVE_FOLDER_ID]}
+                            # USEM LA CARPETA QUE HEM TROBAT/CREAT
+                            file_metadata = {"name": filename, "parents": [CURRENT_FOLDER_ID]}
                             media = MediaIoBaseUpload(io.BytesIO(file_data), mimetype='application/pdf')
                             
-                            # Intentem pujar el fitxer
                             file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
                             drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
 
@@ -153,17 +184,18 @@ with tab1:
                             proveidor_val = proveidor.group(1).strip() if proveidor else "Desconegut"
 
                             historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
-                            st.write(f"✅ {filename} pujada correctament.")
+                            # st.write(f"✅ {filename} pujada correctament.")
                 
                 except Exception as e:
-                    st.error(f"❌ Error amb el fitxer del correu {msg['id']}: {e}")
-                    # Si és un error de Google, intentem mostrar detalls
-                    if hasattr(e, 'content'):
-                         st.code(e.content)
+                    st.error(f"❌ Error amb un fitxer: {e}")
+                
+                # Actualitzar barra
+                progress_bar.progress((i + 1) / len(messages))
 
             if historial_rows:
                 sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
-                st.success("Totes les factures s'han pujat a Drive i a l'Excel!")
+                st.success("✅ Totes les factures s'han pujat a Drive i a l'Excel correctament!")
+
 # ===================== HISTORIAL =====================
 with tab2:
     st.markdown("### Historial de Factures Pujades")
