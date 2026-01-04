@@ -34,17 +34,14 @@ def authenticate():
     creds = None
     token_path = "token.pickle"
 
-    # 1. Mirem si ja tenim el token guardat
     if os.path.exists(token_path):
         with open(token_path, "rb") as token:
             creds = pickle.load(token)
 
-    # 2. Si no és vàlid, intentem refrescar-lo o loguejar-nos
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Configuració del flow
             client_config = {
                 "web": {
                     "client_id": st.secrets["CLIENT_ID"],
@@ -52,41 +49,29 @@ def authenticate():
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
                     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    # Important: Ha de coincidir amb la de Google Cloud
                     "redirect_uris": ["https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"]
                 }
             }
 
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            # Important: Ha de coincidir amb la de Google Cloud
             flow.redirect_uri = "https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"
 
-            # 3. DETECCIÓ AUTOMÀTICA DEL CODI DE GOOGLE
-            # Mirem si a la URL hi ha el paràmetre "?code="
             query_params = st.query_params
             auth_code = query_params.get("code")
 
             if auth_code:
-                # Si trobem el codi a la URL, el bescanviem pel token automàticament!
                 flow.fetch_token(code=auth_code)
                 creds = flow.credentials
                 with open(token_path, "wb") as token:
                     pickle.dump(creds, token)
-                
-                # Netejem la URL perquè no quedi el codi lleig allà dalt
                 st.query_params.clear()
                 st.rerun()
             else:
-                # Si no tenim codi, mostrem el botó per anar a Google
-                auth_url, _ = flow.authorization_url(
-                    prompt="consent",
-                    access_type="offline"
-                )
+                auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
                 st.warning("⚠️ Primer has d'autoritzar l'aplicació.")
                 st.markdown(f"[👉 **Fes clic aquí per connectar amb Google**]({auth_url})", unsafe_allow_html=True)
-                st.stop() # Aturem l'app fins que l'usuari torni amb el codi
+                st.stop()
 
-    # Creem els serveis
     gmail_service = build("gmail", "v1", credentials=creds)
     drive_service = build("drive", "v3", credentials=creds)
     sheets_service = build("sheets", "v4", credentials=creds)
@@ -106,15 +91,34 @@ with tab1:
     if st.button("Buscant correus..."):
         gmail_service, drive_service, sheets_service = authenticate()
 
-        query = f'label:{LABEL_NAME} has:attachment filename:pdf'
+        # --- LÒGICA DE FILTRATGE PER DATES (NOVETAT) ---
+        date_query = ""
+        if any != "Tots":
+            if trimestre == "Tots":
+                date_query = f" after:{any}/01/01 before:{int(any)+1}/01/01"
+            elif trimestre == "1r Trimestre":
+                date_query = f" after:{any}/01/01 before:{any}/04/01"
+            elif trimestre == "2n Trimestre":
+                date_query = f" after:{any}/04/01 before:{any}/07/01"
+            elif trimestre == "3r Trimestre":
+                date_query = f" after:{any}/07/01 before:{any}/10/01"
+            elif trimestre == "4t Trimestre":
+                date_query = f" after:{any}/10/01 before:{int(any)+1}/01/01"
+        
+        # Afegim el filtre de dates a la cerca
+        query = f'label:{LABEL_NAME} has:attachment filename:pdf{date_query}'
+        
+        # Mostrem què estem buscant (per depurar)
+        # st.write(f"Filtre aplicat a Gmail: `{query}`") 
+
         results = gmail_service.users().messages().list(userId="me", q=query).execute()
         messages = results.get("messages", [])
 
         if not messages:
-            st.info("No s'han trobat factures PDF a l'etiqueta Factures.")
+            st.info(f"No s'han trobat factures PDF a l'etiqueta Factures per al període seleccionat.")
             st.stop()
 
-        st.write(f"Trobats {len(messages)} correus amb factures.")
+        st.success(f"Trobats {len(messages)} correus que coincideixen amb els filtres.")
 
         with st.spinner("Processant..."):
             historial_rows = []
@@ -133,13 +137,12 @@ with tab1:
                         file_data = base64.urlsafe_b64decode(att["data"])
                         filename = part["filename"]
 
-                        # Guardar a Drive
                         file_metadata = {"name": filename, "parents": [DRIVE_FOLDER_ID]}
-                        media = io.BytesIO(file_data)
+                        media = MediaIoBaseUpload(io.BytesIO(file_data), mimetype='application/pdf')
+                        
                         file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
                         drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
 
-                        # Extreure total i proveïdor
                         with pdfplumber.open(io.BytesIO(file_data)) as pdf:
                             text = "\n".join(page.extract_text() or "" for page in pdf.pages)
                         total = re.search(r'Total[:\s]*([\d.,]+)\s*€?', text, re.I)
@@ -148,12 +151,11 @@ with tab1:
                         proveidor_val = proveidor.group(1).strip() if proveidor else "Desconegut"
 
                         historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
-
-                        st.success(f"{filename} processada i guardada a Drive")
+                        st.write(f"✅ {filename} pujada.")
 
             if historial_rows:
                 sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
-                st.success("Historial actualitzat a Google Sheets!")
+                st.success("Totes les factures s'han pujat a Drive i a l'Excel!")
 
 # ===================== HISTORIAL =====================
 with tab2:
