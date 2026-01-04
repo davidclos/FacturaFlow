@@ -78,9 +78,13 @@ def authenticate():
     
     return gmail_service, drive_service, sheets_service
 
-# ===================== PUJAR FACTURES =====================
+# ===================== PUJAR FACTURES (AMB DEPURACIÓ) =====================
 with tab1:
     st.markdown("### Importar des de Gmail (Etiqueta \"Factures\")")
+    
+    # --- DEPURACIÓ: MOSTREM L'ID DE LA CARPETA ---
+    st.info(f"📂 **Verificant configuració:**\n\nL'App intentarà guardar a la carpeta Drive amb ID: `{DRIVE_FOLDER_ID}`")
+    # ---------------------------------------------
 
     col1, col2 = st.columns(2)
     with col1:
@@ -91,7 +95,7 @@ with tab1:
     if st.button("Buscant correus..."):
         gmail_service, drive_service, sheets_service = authenticate()
 
-        # --- LÒGICA DE FILTRATGE PER DATES (NOVETAT) ---
+        # --- LÒGICA DE FILTRATGE PER DATES ---
         date_query = ""
         if any != "Tots":
             if trimestre == "Tots":
@@ -105,12 +109,8 @@ with tab1:
             elif trimestre == "4t Trimestre":
                 date_query = f" after:{any}/10/01 before:{int(any)+1}/01/01"
         
-        # Afegim el filtre de dates a la cerca
         query = f'label:{LABEL_NAME} has:attachment filename:pdf{date_query}'
         
-        # Mostrem què estem buscant (per depurar)
-        # st.write(f"Filtre aplicat a Gmail: `{query}`") 
-
         results = gmail_service.users().messages().list(userId="me", q=query).execute()
         messages = results.get("messages", [])
 
@@ -118,45 +118,52 @@ with tab1:
             st.info(f"No s'han trobat factures PDF a l'etiqueta Factures per al període seleccionat.")
             st.stop()
 
-        st.success(f"Trobats {len(messages)} correus que coincideixen amb els filtres.")
+        st.success(f"Trobats {len(messages)} correus. Començant la càrrega...")
 
         with st.spinner("Processant..."):
             historial_rows = []
             for msg in messages:
-                msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
-                payload = msg_data["payload"]
-                headers = payload["headers"]
-                subject = next((h["value"] for h in headers if h["name"] == "Subject"), "Sense assumpte")
-                date_str = next((h["value"] for h in headers if h["name"] == "Date"), "")
+                try: # <--- AFEGIT BLOC TRY/EXCEPT PER VEURE L'ERROR REAL
+                    msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
+                    payload = msg_data["payload"]
+                    headers = payload["headers"]
+                    subject = next((h["value"] for h in headers if h["name"] == "Subject"), "Sense assumpte")
+                    date_str = next((h["value"] for h in headers if h["name"] == "Date"), "")
 
-                parts = payload.get("parts", [])
-                for part in parts:
-                    if part.get("filename", "").lower().endswith(".pdf"):
-                        att_id = part["body"]["attachmentId"]
-                        att = gmail_service.users().messages().attachments().get(userId="me", messageId=msg["id"], id=att_id).execute()
-                        file_data = base64.urlsafe_b64decode(att["data"])
-                        filename = part["filename"]
+                    parts = payload.get("parts", [])
+                    for part in parts:
+                        if part.get("filename", "").lower().endswith(".pdf"):
+                            att_id = part["body"]["attachmentId"]
+                            att = gmail_service.users().messages().attachments().get(userId="me", messageId=msg["id"], id=att_id).execute()
+                            file_data = base64.urlsafe_b64decode(att["data"])
+                            filename = part["filename"]
 
-                        file_metadata = {"name": filename, "parents": [DRIVE_FOLDER_ID]}
-                        media = MediaIoBaseUpload(io.BytesIO(file_data), mimetype='application/pdf')
-                        
-                        file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-                        drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
+                            file_metadata = {"name": filename, "parents": [DRIVE_FOLDER_ID]}
+                            media = MediaIoBaseUpload(io.BytesIO(file_data), mimetype='application/pdf')
+                            
+                            # Intentem pujar el fitxer
+                            file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+                            drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
 
-                        with pdfplumber.open(io.BytesIO(file_data)) as pdf:
-                            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-                        total = re.search(r'Total[:\s]*([\d.,]+)\s*€?', text, re.I)
-                        total_val = total.group(1).replace(",", ".") if total else "0.00"
-                        proveidor = re.search(r'(?:Proveïdor|Emissor)[:\s]*(.+)', text, re.I)
-                        proveidor_val = proveidor.group(1).strip() if proveidor else "Desconegut"
+                            with pdfplumber.open(io.BytesIO(file_data)) as pdf:
+                                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+                            total = re.search(r'Total[:\s]*([\d.,]+)\s*€?', text, re.I)
+                            total_val = total.group(1).replace(",", ".") if total else "0.00"
+                            proveidor = re.search(r'(?:Proveïdor|Emissor)[:\s]*(.+)', text, re.I)
+                            proveidor_val = proveidor.group(1).strip() if proveidor else "Desconegut"
 
-                        historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
-                        st.write(f"✅ {filename} pujada.")
+                            historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
+                            st.write(f"✅ {filename} pujada correctament.")
+                
+                except Exception as e:
+                    st.error(f"❌ Error amb el fitxer del correu {msg['id']}: {e}")
+                    # Si és un error de Google, intentem mostrar detalls
+                    if hasattr(e, 'content'):
+                         st.code(e.content)
 
             if historial_rows:
                 sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
                 st.success("Totes les factures s'han pujat a Drive i a l'Excel!")
-
 # ===================== HISTORIAL =====================
 with tab2:
     st.markdown("### Historial de Factures Pujades")
