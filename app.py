@@ -15,7 +15,7 @@ from googleapiclient.http import MediaIoBaseUpload
 # ===================== CONFIGURACIÓ =====================
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",  # <--- HEM TRET EL ".file"
     "https://www.googleapis.com/auth/spreadsheets"
 ]
 
