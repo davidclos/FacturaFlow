@@ -98,4 +98,113 @@ with tab1:
     
     # --- CÀLCUL AUTOMÀTIC D'ANYS ---
     # Agafem l'any actual del sistema (ex: 2026)
-    current_year =
+    current_year = datetime.now().year
+    # Creem una llista: [Tots, Any següent, Any actual, Any passat, l'altre...]
+    llista_anys = ["Tots"] + [str(y) for y in range(current_year + 1, current_year - 4, -1)]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        trimestre = st.selectbox("Trimestre", ["Tots", "1r Trimestre", "2n Trimestre", "3r Trimestre", "4t Trimestre"])
+    with col2:
+        # Ara la llista d'anys s'actualitza sola
+        any = st.selectbox("Any", llista_anys)
+
+    if st.button("Buscant correus..."):
+        gmail_service, drive_service, sheets_service = authenticate()
+
+        # Decidim el nom de la carpeta segons el que has triat
+        if any == "Tots":
+            nom_carpeta = "Factures Generals"
+        elif trimestre == "Tots":
+            nom_carpeta = f"Factures {any}"
+        else:
+            nom_carpeta = f"Factures {trimestre} {any}"
+
+        # Busquem o creem aquesta carpeta específica
+        folder_id, folder_link = get_or_create_quarter_folder(drive_service, nom_carpeta)
+        st.info(f"📂 Treballant a la carpeta: **{nom_carpeta}**")
+
+        # Filtres de data
+        date_query = ""
+        if any != "Tots":
+            if trimestre == "Tots": date_query = f" after:{any}/01/01 before:{int(any)+1}/01/01"
+            elif trimestre == "1r Trimestre": date_query = f" after:{any}/01/01 before:{any}/04/01"
+            elif trimestre == "2n Trimestre": date_query = f" after:{any}/04/01 before:{any}/07/01"
+            elif trimestre == "3r Trimestre": date_query = f" after:{any}/07/01 before:{any}/10/01"
+            elif trimestre == "4t Trimestre": date_query = f" after:{any}/10/01 before:{int(any)+1}/01/01"
+        
+        query = f'label:{LABEL_NAME} has:attachment filename:pdf{date_query}'
+        results = gmail_service.users().messages().list(userId="me", q=query).execute()
+        messages = results.get("messages", [])
+
+        if not messages:
+            st.warning("No s'han trobat correus amb els filtres seleccionats.")
+            st.stop()
+
+        st.write(f"🔎 Analitzant {len(messages)} correus...")
+        
+        progress_bar = st.progress(0)
+        historial_rows = []
+        count_success = 0
+        
+        for i, msg in enumerate(messages):
+            try:
+                msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
+                payload = msg_data["payload"]
+                parts = payload.get("parts", [])
+                
+                headers = payload["headers"]
+                date_str = next((h["value"] for h in headers if h["name"] == "Date"), "")
+
+                for part in parts:
+                    if part.get("filename", "").lower().endswith(".pdf"):
+                        att_id = part["body"]["attachmentId"]
+                        att = gmail_service.users().messages().attachments().get(userId="me", messageId=msg["id"], id=att_id).execute()
+                        file_data = base64.urlsafe_b64decode(att["data"])
+                        filename = part["filename"]
+
+                        # --- PUJADA A DRIVE (A LA CARPETA DEL TRIMESTRE) ---
+                        file_metadata = {"name": filename, "parents": [folder_id]}
+                        media = MediaIoBaseUpload(io.BytesIO(file_data), mimetype='application/pdf')
+                        file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+                        drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
+
+                        # --- LECTURA DADES ---
+                        with pdfplumber.open(io.BytesIO(file_data)) as pdf:
+                            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+                        
+                        total_match = re.search(r'Total[:\s]*([\d.,]+)\s*€?', text, re.I)
+                        total_val = total_match.group(1).replace(",", ".") if total_match else "0.00"
+                        
+                        prov_match = re.search(r'(?:Proveïdor|Emissor)[:\s]*(.+)', text, re.I)
+                        proveidor_val = prov_match.group(1).strip() if prov_match else "Desconegut"
+
+                        historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
+                        count_success += 1
+
+            except Exception as e:
+                print(f"Error al correu {msg['id']}: {e}")
+            
+            progress_bar.progress((i + 1) / len(messages))
+
+        if historial_rows:
+            sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
+            
+            st.success(f"✅ Fet! {count_success} factures guardades correctament.")
+            st.markdown(f"### [📂 Ves a la carpeta: {nom_carpeta}]({folder_link})")
+        else:
+            st.warning("S'han trobat correus, però cap tenia un PDF vàlid o hi ha hagut errors.")
+
+# ===================== HISTORIAL =====================
+with tab2:
+    if st.button("Actualitzar historial"):
+        try:
+            _, _, sheets_service = authenticate()
+            result = sheets_service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="A:G").execute()
+            values = result.get("values", [])
+            if len(values) > 1:
+                st.dataframe(pd.DataFrame(values[1:], columns=values[0]), use_container_width=True)
+            else:
+                st.info("Historial buit.")
+        except:
+            st.error("Error carregant historial.")
