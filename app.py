@@ -20,7 +20,7 @@ SCOPES = [
 ]
 
 LABEL_NAME = "Factures"
-DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"
+DRIVE_FOLDER_ID = "1fpjoOGFJ-ZaoDKrBPmcaHsBFErTrwnTh"
 SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # El teu ID
 
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
