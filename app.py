@@ -18,18 +18,17 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets"
 ]
 
-LABEL_NAME = "Factures"  # Canvia si la teva etiqueta es diu diferent
-DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"  # ID de la carpeta a Drive
-SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # Canvia pel teu ID del Sheet
+LABEL_NAME = "Factures"
+DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"
+SHEET_ID = "POSA_EL_TE_ID_DEL_SHEET_AQUI"  # Canvia-ho pel teu
 
-# ===================== INTERFÍCIE =====================
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
 st.markdown("<h1 style='text-align: center; color: #1a73e8;'>FacturaFlow Pro</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-style: italic;'>Dades assegurades localment. No perdràs cap revisió.</p>", unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["Pujar Factures", "Historial"])
 
-# ===================== AUTENTICACIÓ COMPATIBLE AMB STREAMLIT CLOUD =====================
+# ===================== AUTENTICACIÓ (FUNCIONA A STREAMLIT CLOUD) =====================
 @st.cache_resource
 def authenticate():
     creds = None
@@ -57,14 +56,13 @@ def authenticate():
                 SCOPES
             )
 
-            # FLUX MANUAL: enllaç + codi a enganxar
             auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-            st.markdown("**1. Autoritza l'app amb Google:**")
+            st.markdown("**Autoritza l'app amb Google:**")
             st.markdown(f"[{auth_url}]({auth_url})")
 
             st.info("Obre l'enllaç, accepta els permisos i copia el codi que et dona Google.")
 
-            code = st.text_input("2. Enganxa aquí el codi d'autorització:", type="password")
+            code = st.text_input("Enganxa aquí el codi d'autorització:", type="password")
 
             if code:
                 try:
@@ -72,12 +70,12 @@ def authenticate():
                     creds = flow.credentials
                     with open(token_path, "wb") as token:
                         pickle.dump(creds, token)
-                    st.success("Autenticació correcta! Ja pots processar factures.")
+                    st.success("Connectat correctament a Google! Ara pots processar factures.")
                 except Exception as e:
-                    st.error(f"Error amb el codi: {e}")
+                    st.error(f"Error: {e}")
                     st.stop()
             else:
-                st.warning("Enganxa el codi per continuar.")
+                st.warning("Cal el codi per continuar.")
                 st.stop()
 
     gmail_service = build("gmail", "v1", credentials=creds)
@@ -85,7 +83,7 @@ def authenticate():
     sheets_service = build("sheets", "v4", credentials=creds)
     return gmail_service, drive_service, sheets_service
 
-# ===================== PESTANYA PUJAR FACTURES =====================
+# ===================== PUJAR FACTURES =====================
 with tab1:
     st.markdown("### Importar des de Gmail (Etiqueta \"Factures\")")
 
@@ -103,12 +101,12 @@ with tab1:
         messages = results.get("messages", [])
 
         if not messages:
-            st.info("No s'han trobat factures amb PDF a l'etiqueta Factures.")
+            st.info("No s'han trobat factures PDF a l'etiqueta Factures.")
             st.stop()
 
-        st.write(f"**Trobats {len(messages)} correus amb factures PDF.**")
+        st.write(f"Trobats {len(messages)} correus amb factures.")
 
-        with st.spinner("Processant factures..."):
+        with st.spinner("Processant..."):
             historial_rows = []
             for msg in messages:
                 msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
@@ -121,11 +119,8 @@ with tab1:
                 for part in parts:
                     if part.get("filename", "").lower().endswith(".pdf"):
                         att_id = part["body"]["attachmentId"]
-                        att = gmail_service.users().messages().attachments().get(
-                            userId="me", messageId=msg["id"], id=att_id
-                        ).execute()
+                        att = gmail_service.users().messages().attachments().get(userId="me", messageId=msg["id"], id=att_id).execute()
                         file_data = base64.urlsafe_b64decode(att["data"])
-
                         filename = part["filename"]
 
                         # Guardar a Drive
@@ -134,42 +129,25 @@ with tab1:
                         file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
                         drive_link = f"https://drive.google.com/file/d/{file['id']}/view"
 
-                        # Extreure dades bàsiques
+                        # Extreure total i proveïdor
                         with pdfplumber.open(io.BytesIO(file_data)) as pdf:
                             text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-
                         total = re.search(r'Total[:\s]*([\d.,]+)\s*€?', text, re.I)
                         total_val = total.group(1).replace(",", ".") if total else "0.00"
-
                         proveidor = re.search(r'(?:Proveïdor|Emissor)[:\s]*(.+)', text, re.I)
                         proveidor_val = proveidor.group(1).strip() if proveidor else "Desconegut"
 
-                        historial_rows.append([
-                            filename,
-                            date_str[:10],
-                            total_val,
-                            proveidor_val,
-                            "Processada",
-                            drive_link,
-                            datetime.now().strftime("%Y-%m-%d %H:%M")
-                        ])
+                        historial_rows.append([filename, date_str[:10], total_val, proveidor_val, "Processada", drive_link, datetime.now().strftime("%Y-%m-%d %H:%M")])
 
-                        st.success(f"✅ {filename} processada i guardada a Drive")
+                        st.success(f"{filename} processada i guardada a Drive")
 
-            # Pujar a Sheets si hi ha dades
             if historial_rows and SHEET_ID != "POSA_EL_TE_ID_DEL_SHEET_AQUI":
-                sheets_service.spreadsheets().values().append(
-                    spreadsheetId=SHEET_ID,
-                    range="A1",
-                    valueInputOption="RAW",
-                    body={"values": historial_rows}
-                ).execute()
-                st.success("Historial actualitzat a Google Sheets!")
+                sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
+                st.success("Historial actualitzat!")
 
-# ===================== PESTANYA HISTORIAL =====================
+# ===================== HISTORIAL =====================
 with tab2:
     st.markdown("### Historial de Factures Pujades")
-
     if st.button("Actualitzar historial"):
         try:
             _, _, sheets_service = authenticate()
@@ -179,8 +157,8 @@ with tab2:
                 df = pd.DataFrame(values[1:], columns=values[0])
                 st.dataframe(df, use_container_width=True)
             else:
-                st.info("Encara no hi ha factures a l'historial.")
+                st.info("Encara no hi ha dades.")
         except Exception as e:
-            st.error("Error carregant l'historial. Assegura't d'haver-te autenticat i posat el SHEET_ID correcte.")
+            st.error("Error carregant historial. Autentica't primer.")
 
 st.markdown("<p style='text-align: center;'>O bé puja-les manualment</p>", unsafe_allow_html=True)
