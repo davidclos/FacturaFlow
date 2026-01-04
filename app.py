@@ -54,7 +54,7 @@ def authenticate():
             }
 
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            flow.redirect_uri = "https://auth.streamlit.app/callback"  # FORÇAT AQUÍ
+            flow.redirect_uri = "https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"  # FORÇAT AQUÍ
 
             auth_url, _ = flow.authorization_url(
                 prompt="consent",
