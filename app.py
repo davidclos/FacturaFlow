@@ -28,20 +28,22 @@ st.markdown("<p style='text-align: center; font-style: italic;'>Dades assegurade
 
 tab1, tab2 = st.tabs(["Pujar Factures", "Historial"])
 
-# ===================== AUTENTICACIÓ =====================
+# ===================== AUTENTICACIÓ MILLORADA =====================
 def authenticate():
     creds = None
     token_path = "token.pickle"
 
+    # 1. Mirem si ja tenim el token guardat
     if os.path.exists(token_path):
         with open(token_path, "rb") as token:
             creds = pickle.load(token)
 
+    # 2. Si no és vàlid, intentem refrescar-lo o loguejar-nos
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Configuració del flow amb redirect_uri forçat
+            # Configuració del flow
             client_config = {
                 "web": {
                     "client_id": st.secrets["CLIENT_ID"],
@@ -49,42 +51,45 @@ def authenticate():
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
                     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    # Important: Ha de coincidir amb la de Google Cloud
                     "redirect_uris": ["https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"]
                 }
             }
 
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            flow.redirect_uri = "https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"  # FORÇAT AQUÍ
+            # Important: Ha de coincidir amb la de Google Cloud
+            flow.redirect_uri = "https://facturaflow-fqzgmmmztxoc8a5ilixoof.streamlit.app"
 
-            auth_url, _ = flow.authorization_url(
-                prompt="consent",
-                access_type="offline"
-            )
+            # 3. DETECCIÓ AUTOMÀTICA DEL CODI DE GOOGLE
+            # Mirem si a la URL hi ha el paràmetre "?code="
+            query_params = st.query_params
+            auth_code = query_params.get("code")
 
-            st.markdown("**Autoritza l'app amb Google:**")
-            st.markdown(f"[{auth_url}]({auth_url})")
-
-            st.info("Obre l'enllaç, accepta els permisos i copia el codi que et dona Google.")
-
-            code = st.text_input("Enganxa aquí el codi d'autorització:", type="password")
-
-            if code:
-                try:
-                    flow.fetch_token(code=code)
-                    creds = flow.credentials
-                    with open(token_path, "wb") as token:
-                        pickle.dump(creds, token)
-                    st.success("Connectat correctament a Google!")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                    st.stop()
+            if auth_code:
+                # Si trobem el codi a la URL, el bescanviem pel token automàticament!
+                flow.fetch_token(code=auth_code)
+                creds = flow.credentials
+                with open(token_path, "wb") as token:
+                    pickle.dump(creds, token)
+                
+                # Netejem la URL perquè no quedi el codi lleig allà dalt
+                st.query_params.clear()
+                st.rerun()
             else:
-                st.warning("Cal el codi per continuar.")
-                st.stop()
+                # Si no tenim codi, mostrem el botó per anar a Google
+                auth_url, _ = flow.authorization_url(
+                    prompt="consent",
+                    access_type="offline"
+                )
+                st.warning("⚠️ Primer has d'autoritzar l'aplicació.")
+                st.markdown(f"[👉 **Fes clic aquí per connectar amb Google**]({auth_url})", unsafe_allow_html=True)
+                st.stop() # Aturem l'app fins que l'usuari torni amb el codi
 
+    # Creem els serveis
     gmail_service = build("gmail", "v1", credentials=creds)
     drive_service = build("drive", "v3", credentials=creds)
     sheets_service = build("sheets", "v4", credentials=creds)
+    
     return gmail_service, drive_service, sheets_service
 
 # ===================== PUJAR FACTURES =====================
