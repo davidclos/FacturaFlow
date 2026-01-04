@@ -20,7 +20,7 @@ SCOPES = [
 
 LABEL_NAME = "Factures"
 DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"
-SHEET_ID = "POSA_EL_TE_ID_DEL_SHEET_AQUI"  # Canvia-ho pel teu
+SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # Canvia-ho pel teu
 
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
 st.markdown("<h1 style='text-align: center; color: #1a73e8;'>FacturaFlow Pro</h1>", unsafe_allow_html=True)
