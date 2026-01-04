@@ -19,17 +19,17 @@ SCOPES = [
 ]
 
 LABEL_NAME = "Factures"
-DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"
-SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # Canvia-ho pel teu
+DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"  # La teva carpeta
+SHEET_ID = "1fS6cyXxMgjimNHCykATd8t3uoVTo3TxhEikMkPxrR0w"  # El teu Sheet ID
 
+# ===================== INTERFÍCIE =====================
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
 st.markdown("<h1 style='text-align: center; color: #1a73e8;'>FacturaFlow Pro</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-style: italic;'>Dades assegurades localment. No perdràs cap revisió.</p>", unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["Pujar Factures", "Historial"])
 
-# ===================== AUTENTICACIÓ (FUNCIONA A STREAMLIT CLOUD) =====================
-@st.cache_resource
+# ===================== AUTENTICACIÓ =====================
 def authenticate():
     creds = None
     token_path = "token.pickle"
@@ -56,11 +56,13 @@ def authenticate():
                 SCOPES
             )
 
+            # FORÇEM EL REDIRECT_URI A L'URL D'AUTORITZACIÓ
             auth_url, _ = flow.authorization_url(
-    prompt="consent",
-    access_type="offline",
-    redirect_uri="https://auth.streamlit.app/callback"
-)
+                prompt="consent",
+                access_type="offline",
+                redirect_uri="https://auth.streamlit.app/callback"  # AQUESTA LÍNIA ÉS LA CLAVE!
+            )
+
             st.markdown("**Autoritza l'app amb Google:**")
             st.markdown(f"[{auth_url}]({auth_url})")
 
@@ -76,10 +78,10 @@ def authenticate():
                         pickle.dump(creds, token)
                     st.success("Connectat correctament a Google! Ara pots processar factures.")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error amb el codi: {e}")
                     st.stop()
             else:
-                st.warning("Cal el codi per continuar.")
+                st.warning("Cal enganxar el codi per continuar.")
                 st.stop()
 
     gmail_service = build("gmail", "v1", credentials=creds)
@@ -110,7 +112,7 @@ with tab1:
 
         st.write(f"Trobats {len(messages)} correus amb factures.")
 
-        with st.spinner("Processant..."):
+        with st.spinner("Processant factures..."):
             historial_rows = []
             for msg in messages:
                 msg_data = gmail_service.users().messages().get(userId="me", id=msg["id"]).execute()
@@ -145,9 +147,9 @@ with tab1:
 
                         st.success(f"{filename} processada i guardada a Drive")
 
-            if historial_rows and SHEET_ID != "POSA_EL_TE_ID_DEL_SHEET_AQUI":
+            if historial_rows:
                 sheets_service.spreadsheets().values().append(spreadsheetId=SHEET_ID, range="A1", valueInputOption="RAW", body={"values": historial_rows}).execute()
-                st.success("Historial actualitzat!")
+                st.success("Historial actualitzat a Google Sheets!")
 
 # ===================== HISTORIAL =====================
 with tab2:
@@ -161,8 +163,8 @@ with tab2:
                 df = pd.DataFrame(values[1:], columns=values[0])
                 st.dataframe(df, use_container_width=True)
             else:
-                st.info("Encara no hi ha dades.")
+                st.info("Encara no hi ha factures a l'historial.")
         except Exception as e:
-            st.error("Error carregant historial. Autentica't primer.")
+            st.error("Error carregant l'historial. Autentica't primer.")
 
 st.markdown("<p style='text-align: center;'>O bé puja-les manualment</p>", unsafe_allow_html=True)
