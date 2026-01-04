@@ -47,16 +47,20 @@ with tab1:
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
                 else:
-                    flow = InstalledAppFlow.from_client_config({
-                        "installed": {
-                            "client_id": "POSA_CLIENT_ID",
-                            "client_secret": "POSA_CLIENT_SECRET",
-                            "redirect_uris": ["https://auth.streamlit.app/callback"],
-                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                            "token_uri": "https://oauth2.googleapis.com/token"
-                        }
-                    }, SCOPES)
-                    creds = flow.run_local_server(port=0)
+                 flow = InstalledAppFlow.from_client_config(
+    {
+        "web": {
+            "client_id": st.secrets["CLIENT_ID"],
+            "client_secret": st.secrets["CLIENT_SECRET"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["https://auth.streamlit.app/callback"],
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+        }
+    },
+    SCOPES
+)
+creds = flow.run_local_server(port=0)
                 with open('token.pickle', 'wb') as token:
                     pickle.dump(creds, token)
             return build('gmail', 'v1', credentials=creds), build('drive', 'v3', credentials=creds), build('sheets', 'v4', credentials=creds)
