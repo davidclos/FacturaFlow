@@ -18,7 +18,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets'  # Nou per Sheets
 ]
 LABEL_NAME = "Factures"
-DRIVE_FOLDER_ID = "POSA_L_ID_DE_LA_CARPETA_AQUI"  # ID de la carpeta "Factures Processades"
+DRIVE_FOLDER_ID = "1jXAN0FrhPu84mwcYIOzmmfdWOt3EwYRA"  # ID de la carpeta "Factures Processades"
 SHEET_ID = "POSA_L_ID_DEL_TEUGOOGLE_SHEET_AQUI"  # ID del Sheet (de la URL)
 
 st.set_page_config(page_title="FacturaFlow Pro", layout="centered")
